@@ -1,23 +1,25 @@
 #!/usr/bin/env node
 
+const gitflow = require('../lib/gitflow')
+
 //-------------------------------------------------------
 // config
 const KEEP_AHEAD_LINES = 5
 const KEEP_BEHIND_LINES = 18
-const MAX_PARRALLEL = 5
+const MAX_PARRALLEL = 3
 function hasWarn(line) {
   return /(^|\s)WARN\s/i.test(line)
 }
 function hasError(line) {
-  return /(error|(^|\s)ERRO\s)/i.test(line) && !isExcludeError(line)
+  return /(error|.go:\d+:\d+:|panic:|(^|\s)ERRO\s|\sFAIL:)/i.test(line) && !isExcludeError(line)
 }
 
 function isExcludeError(line) {
-  return /(errors.ts|watcherror)/i.test(line)
+  return /(errors.ts|watcherror|panic.go)/i.test(line)
 }
 
 function isExclude(line) {
-  return /(node_modules|internal\/modules)/i.test(line)
+  return /(node_modules|internal\/modules|\/libexec\/src|testing.|_testing.main.go|goroutine\s)/i.test(line)
 }
 const OK_INFO = `
 \x1b[32m Well done! try \x1b[33mfix all Warnnings./\x1b[32m ~\x1b[0m
@@ -111,7 +113,7 @@ const STATE_LEAVE = '\x1b[30;43m Leaving \x1b[0m'
 const STATE_NONE = '\x1b[30;43m Booting \x1b[0m'
 const STATE_OK = '\x1b[30;42m OK \x1b[0m'
 const STATE_ERROR = '\x1b[30;41m ERROR \x1b[0m'
-const STATE_EXIT = '\x1b[30;44m EXIT \x1b[0m'
+const STATE_EXIT = '\x1b[30;44m FAIL \x1b[0m'
 const STATE_TIMEOUT = '\x1b[30;43m TIMEOUT \x1b[0m'
 // const STATE_WARN = '\x1b[30;43m WARN \x1b[0m'
 
@@ -132,7 +134,7 @@ let textInfo = ''
 
 //-------------------------------------------------------
 //       Update Screen. Print current test status.
-function printStatus() {
+async function printStatus() {
   const leaveTime = Date.now() - lastModifyTime
   const isLeave = leaveTime > 300000
   cursorTo(out, 0, 0)
@@ -160,19 +162,22 @@ function printStatus() {
     out.write(textInfo)
   }
   if(state === STATE_OK) {
-    if (isLeave) lastRestTime = lastModifyTime
-    const workTime = Date.now() - lastRestTime
-    if (isLeave) {
-      out.write(LEAVE_INFO)
-    } else if(workTime > 30*60*1000) {
-      lastRestTime = Date.now()
-    } else if(workTime<5*60*1000) {
-      // in resting.
-      out.write(REST_INFO)
-    } else if(warnCount>0) {
-      out.write(OK_INFO)
-    } else {
-      out.write(EXCELLENT_INFO)
+    const handled = await gitflow(out)
+    if(!handled) {
+      if (isLeave) lastRestTime = lastModifyTime
+      const workTime = Date.now() - lastRestTime
+      if (isLeave) {
+        out.write(LEAVE_INFO)
+      } else if(workTime > 30*60*1000) {
+        lastRestTime = Date.now()
+      } else if(workTime<5*60*1000) {
+        // in resting.
+        out.write(REST_INFO)
+      } else if(warnCount>0) {
+        out.write(OK_INFO)
+      } else {
+        out.write(EXCELLENT_INFO)
+      }
     }
   }
 
@@ -197,7 +202,7 @@ const monthChars = '㋀㋁㋂㋃㋄㋅㋆㋇㋈㋉㋊㋋'
 const dateChars = '㏠㏡㏢㏣㏤㏥㏦㏧㏨㏩㏪㏫㏬㏭㏮㏯㏰㏱㏲㏳㏴㏵㏶㏷㏸㏹㏺㏻㏼㏽㏾'
 const weekChars = '㊐㊊㊋㊌㊍㊎㊏'
 const wwdd = (d) => 
-  `${weekChars[d.getDay()]} ${dateChars[d.getDate()-1]} ${monthChars[d.getMonth()]}`
+  `${monthChars[d.getMonth()]}${dateChars[d.getDate()-1]} ${weekChars[d.getDay()]}`
 
 const pad = (num) => (num < 10 ? '0' : '') + num
 
@@ -212,7 +217,6 @@ function startTest() {
   const lineBuffer = []
   process.stdout.write('.')
   
-  timer = null
   const startTime = Date.now()
   lastStartTime = startTime
   let gotWarn = 0
@@ -234,8 +238,6 @@ function startTest() {
     }
     state = newState
     printStatus()
-    if (running === 0)
-      timer = setTimeout(startTest, 30000)
     if (ciTimer) clearTimeout(ciTimer)
   }
 
@@ -261,10 +263,12 @@ function startTest() {
         sub.kill()
       }, 500)
     } else if (linesLeft > 0) {
-      if(linesLeft>5 || !isExclude(line)) {
+      var excluded = isExclude(line)
+      if(linesLeft>10 || !excluded) {
         linesLeft--
         if(line.length>80) linesLeft --
-        lineBuffer.push(isError ? ('\x1b[31m' + line + '\x1b[0m') : line)
+        lineBuffer.push(isError ? ('\x1b[31m' + line + '\x1b[0m') : (
+          excluded ? '\x1b[90m' + line + '\x1b[0m' : line))
       }
     }
     if (gotError === 0) {
@@ -356,3 +360,4 @@ rl.on('line', (line) => {
 //-------------------------------------------------------
 
 startTest()
+setInterval(startTest, 30000)
