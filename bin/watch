@@ -1,0 +1,358 @@
+#!/usr/bin/env node
+
+//-------------------------------------------------------
+// config
+const KEEP_AHEAD_LINES = 5
+const KEEP_BEHIND_LINES = 18
+const MAX_PARRALLEL = 5
+function hasWarn(line) {
+  return /(^|\s)WARN\s/i.test(line)
+}
+function hasError(line) {
+  return /(error|(^|\s)ERRO\s)/i.test(line) && !isExcludeError(line)
+}
+
+function isExcludeError(line) {
+  return /(errors.ts|watcherror)/i.test(line)
+}
+
+function isExclude(line) {
+  return /(node_modules|internal\/modules)/i.test(line)
+}
+const OK_INFO = `
+\x1b[32m Well done! try \x1b[33mfix all Warnnings./\x1b[32m ~\x1b[0m
+
+     .-""""""-.
+   .'          '.
+  /   O      O   \\
+ :                :
+ |                |
+ : ',          ,' :
+  \\  '-......-'  /
+   '.          .'
+     '-......-'
+
+`
+const EXCELLENT_INFO = `
+\x1b[32m Good Job! Next step:\x1b[0m
+  0. Don't forget commit your code.
+  1. Check TODO, Try \`\x1b[34mag TODO ./\x1b[0m\`!
+  2. Write another test case
+  3. Design your architecture.
+  4. Increase test coverage to 100%.
+  5. Write a blog or slide as document. Try mdx-deck.
+\x1b[34m
+            ▄▄
+           █░░█
+          █░░░█
+███████▄▄█░░░░░█████▄
+▓▓▓▓▓▓█░░░░░░░░░░░░░█
+▓▓▓▓▓▓█░░░░░░░░░░░░░█
+▓▓▓▓▓▓█░░░░░░░░░░░░░█
+▓▓▓▓▓▓████░░░░░░░░░█
+██████▀   ▀▀██████▀ \x1b[0m
+`
+
+const REST_INFO = `
+\x1b[32mPush your code, and have a rest ~\x1b[0m
+
+    (  )   (   )  )
+     ) (   )  (  (
+     ( )  (    ) )
+     _____________
+    <_____________> ___
+    |             |/ _ \\
+    |               | | |
+    |               |_| |
+ ___|             |\\___/
+/    \\___________/    \\
+\\_____________________/
+`
+const LEAVE_WORD = `\x1b[32mTime is life!\x1b[0m\n`
+const LEAVE_INFO = `
+
+        .---.
+   .-._;.---.;_.-.
+  (_.'_..---.._'._)
+   .'.-'  12 \`-.\`.
+  /,' 11      1 \`.\\
+ // 10      /   2 \\\\
+;;         /       ::
+|| 9  ----O      3 ||
+::                 ;;
+ \\\\ 8           4 //
+  \\\`. 7       5 ,'/
+   '.\`-.__6__.-'.'
+    ((-._____.-))
+    _))       ((_
+   '--'       '--'
+`
+
+function usage() {
+  console.log('Usage:')
+  console.log('    watch <cmd> [args...]')
+  console.log('e.g:')
+  console.log('    watch npm test')
+  console.log('')
+}
+// end config
+
+//-------------------------------------------------------
+const { spawn, exec } = require('child_process')
+const { createInterface, clearScreenDown, cursorTo, moveCursor } = require('readline')
+
+let argv = process.argv.slice(2)
+if(argv.length === 0) {
+  usage()
+  process.exit(0)
+}
+const out = process.stdout
+const STATE_LEAVE = '\x1b[30;43m Leaving \x1b[0m'
+const STATE_NONE = '\x1b[30;43m Booting \x1b[0m'
+const STATE_OK = '\x1b[30;42m OK \x1b[0m'
+const STATE_ERROR = '\x1b[30;41m ERROR \x1b[0m'
+const STATE_EXIT = '\x1b[30;44m EXIT \x1b[0m'
+const STATE_TIMEOUT = '\x1b[30;43m TIMEOUT \x1b[0m'
+// const STATE_WARN = '\x1b[30;43m WARN \x1b[0m'
+
+// status
+let lastStartTime = 0
+let lastRestTime = Date.now() - 5*60*1000
+let lastModifyTime = Date.now()
+let lastModifiedFilename = ''
+let lastEndTime = 0
+let lastElapsed = 0
+let totalElapsed = 0
+let running = 0
+let lastLines = []
+let errorCount = 0
+let warnCount = 0
+let state = STATE_NONE // -1 first running, 1 OK, 2 Got Error 3, Faltal
+let textInfo = ''
+
+//-------------------------------------------------------
+//       Update Screen. Print current test status.
+function printStatus() {
+  const leaveTime = Date.now() - lastModifyTime
+  const isLeave = leaveTime > 300000
+  cursorTo(out, 0, 0)
+  clearScreenDown(out)
+  const cmd = `watch ${argv.join(' ').substring(0, 10)}`
+  // status line
+  out.write(isLeave ? STATE_LEAVE : state)
+  out.write(` \x1b[32m${running} proc\x1b[0m`)
+  out.write(errorCount > 0 ? ` ${errorCount} errors ` : ``)
+  out.write(warnCount > 0 ? ` ${warnCount} warn ` : ``)
+  out.write(` ${smartTime(lastElapsed)}`)
+  if(isLeave)
+    out.write(` Leave: ${smartTime(leaveTime)}`)
+  moveCursor(out, 100)
+  moveCursor(out, -cmd.length-18)
+  out.write(`\x1b[36m ${hhmmss(new Date())} ${wwdd(new Date())} \x1b[0m `)
+  out.write(state === STATE_OK ? '\x1b[30;46m' : '\x1b[30;41m')
+  out.write(` ${cmd} \x1b[0m`)
+  out.write('\n')
+  if(isLeave)
+    out.write(LEAVE_WORD)
+  if(lastModifiedFilename && (lastStartTime - lastModifyTime) < 30000)
+    out.write(`Edit: ${lastModifiedFilename} ${hhmmss(new Date(lastModifyTime))}\n`)
+  if(state !== STATE_OK || warnCount > 0) {
+    out.write(textInfo)
+  }
+  if(state === STATE_OK) {
+    if (isLeave) lastRestTime = lastModifyTime
+    const workTime = Date.now() - lastRestTime
+    if (isLeave) {
+      out.write(LEAVE_INFO)
+    } else if(workTime > 30*60*1000) {
+      lastRestTime = Date.now()
+    } else if(workTime<5*60*1000) {
+      // in resting.
+      out.write(REST_INFO)
+    } else if(warnCount>0) {
+      out.write(OK_INFO)
+    } else {
+      out.write(EXCELLENT_INFO)
+    }
+  }
+
+  out.write('\n\x1b[90mTip:`watch another command` or `exit`\x1b[0m\n')
+  rl.prompt(true)
+}
+
+const smartTime = (t) => {
+  // to second
+  t = t/1000
+  return t < 180 ? smartFloat(t) + 's' :
+    t < 3 * 3600 ? smartFloat(t / 60) + 'm' : (smartFloat(t / 3600) + 'h')
+}
+
+const smartFloat = (t) =>
+  t < 1 ? t.toFixed(3) : t < 10 ? t.toFixed(2) : t.toFixed(1)
+
+const hhmmss = (d) => 
+  `${pad(d.getHours())}:${pad(d.getMinutes())}`
+
+const monthChars = '㋀㋁㋂㋃㋄㋅㋆㋇㋈㋉㋊㋋'
+const dateChars = '㏠㏡㏢㏣㏤㏥㏦㏧㏨㏩㏪㏫㏬㏭㏮㏯㏰㏱㏲㏳㏴㏵㏶㏷㏸㏹㏺㏻㏼㏽㏾'
+const weekChars = '㊐㊊㊋㊌㊍㊎㊏'
+const wwdd = (d) => 
+  `${weekChars[d.getDay()]} ${dateChars[d.getDate()-1]} ${monthChars[d.getMonth()]}`
+
+const pad = (num) => (num < 10 ? '0' : '') + num
+
+//-------------------------------------------------------
+// runner
+let timer
+function startTest() {
+  if(Date.now() - lastStartTime < 100) {
+    return
+  }
+  if(running >= MAX_PARRALLEL) return
+  const lineBuffer = []
+  process.stdout.write('.')
+  
+  timer = null
+  const startTime = Date.now()
+  lastStartTime = startTime
+  let gotWarn = 0
+  let gotError = 0
+  let isEnd = false
+  running++
+  printStatus()
+
+  function endTest(newState, text) {
+    running--
+    isEnd = true
+    errorCount = gotError
+    warnCount = gotWarn
+    lastElapsed = Date.now() - startTime 
+    if(newState === STATE_OK && warnCount > 0) {
+      textInfo = lineBuffer.join('\n')
+    } else {
+      textInfo = text
+    }
+    state = newState
+    printStatus()
+    if (running === 0)
+      timer = setTimeout(startTest, 30000)
+    if (ciTimer) clearTimeout(ciTimer)
+  }
+
+  const sub = spawn(argv[0], argv.slice(1), {
+    stdio: 'pipe',
+    shell: true,
+  })
+
+  let linesLeft = 0
+  const onLine = (line) => {
+    const low = line.toLowerCase()
+    let isError = false
+    if(hasError(low)) {
+      gotError++
+      isError = true
+    }
+    if (isError && gotError === 1 ) {
+      lineBuffer.push('\x1b[31m' + line + '\x1b[0m')
+      linesLeft = KEEP_BEHIND_LINES
+      setTimeout(()=> {
+        if (isEnd) return
+        endTest(STATE_ERROR, lineBuffer.join('\n'))
+        sub.kill()
+      }, 500)
+    } else if (linesLeft > 0) {
+      if(linesLeft>5 || !isExclude(line)) {
+        linesLeft--
+        if(line.length>80) linesLeft --
+        lineBuffer.push(isError ? ('\x1b[31m' + line + '\x1b[0m') : line)
+      }
+    }
+    if (gotError === 0) {
+      lineBuffer.push(line)
+      if (hasWarn(line)) {
+        gotWarn++
+      }
+      if (lineBuffer.length > KEEP_AHEAD_LINES) {
+        for (let i = 0; i < lineBuffer.length;i++) {
+          // keep WARN line, remove only 1 line of non-warn line
+          if(!hasWarn(lineBuffer[i])) {
+            lineBuffer.splice(i, 1)
+            break
+          }
+        }
+        // still too long
+        if (lineBuffer.length > KEEP_AHEAD_LINES) {
+          lineBuffer.shift()
+        }
+      }
+    }
+  }
+
+  const ciTimer = setTimeout(() => {
+    if(isEnd || gotError) return
+    endTest(STATE_TIMEOUT, '')
+    sub.kill()
+  }, 60000)
+
+  createInterface(sub.stdout).on('line', onLine)
+  createInterface(sub.stderr).on('line', onLine)
+
+  sub.on('exit', (code, signal) => {
+    if(isEnd) return
+    if (gotError) {
+      endTest(STATE_ERROR, lineBuffer.join('\n'))
+    } else if (code === 0) {
+      endTest(STATE_OK, '')
+    } else {
+      endTest(STATE_EXIT, lineBuffer.join('\n'))
+    }
+  })
+}
+//-------------------------------------------------------
+// Watch change
+require('chokidar').watch('.', {
+  ignored: ['**/node_modules', '**/tslint.json', '**/dist', '**/coverage', /(^|[\/\\])\../],
+  ignoreInitial: true,
+}).on('all', (_, filename) => {
+  lastModifiedFilename = filename
+  lastModifyTime = Date.now()
+  startTest()
+})
+
+//-------------------------------------------------------
+if(process.stdin.setRawMode)
+  process.stdin.setRawMode(true)
+process.stdin.resume()
+const rl = createInterface({
+  input: process.stdin,
+  output: process.stdout,
+  prompt: '> ',
+})
+rl.on('line', (line) => {
+  const words = line.split(/\s+/)
+  if (line === 'q' || line === 'exit' || line === 'quit')
+    process.exit(0)
+  else if(words[0] === 'watch') {
+    argv = words.slice(1)
+    state = STATE_NONE
+    textInfo = ''
+  } else if(line) {
+    exec(line, (err, stdout, stderr) => {
+      if(err) {
+        console.error(err.stack)
+      }
+      if(stdout) {
+        console.log(stdout)
+      }
+      if(stderr) {
+        console.error(stderr)
+      }
+      rl.prompt(true)
+    })
+  } else {
+    rl.prompt(true)
+  }
+})
+//-------------------------------------------------------
+
+startTest()

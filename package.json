@@ -1,0 +1,18 @@
+{
+  "name": "watcherror",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "bin": {
+    "watch": "./bin/watch"
+  },
+  "scripts": {
+    "test": "node -e 'console.log(1+1)'"
+  },
+  "keywords": [],
+  "author": "Gui Leen <guileen@gmail.com>",
+  "license": "ISC",
+  "dependencies": {
+    "chokidar": "^2.0.4"
+  }
+}
