@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const gitflow = require('../lib/gitflow')
+const alias = require('../lib/alias')
 
 //-------------------------------------------------------
 // config
@@ -37,7 +38,6 @@ const OK_INFO = `
 `
 const EXCELLENT_INFO = `
 \x1b[32m Good Job! Next step:\x1b[0m
-  0. Don't forget commit your code.
   1. Check TODO, Try \`\x1b[34mag TODO ./\x1b[0m\`!
   2. Write another test case
   3. Design your architecture.
@@ -161,9 +161,14 @@ async function printStatus() {
   if(state !== STATE_OK || warnCount > 0) {
     out.write(textInfo)
   }
+  var tip = '\n\x1b[90mTip:`watch another command` or `exit`\x1b[0m\n'
+  var output = null
   if(state === STATE_OK) {
-    const handled = await gitflow(out)
-    if(!handled) {
+    output = await gitflow(out)
+    if(output) {
+      out.write(output)
+    }
+    if(!output) {
       if (isLeave) lastRestTime = lastModifyTime
       const workTime = Date.now() - lastRestTime
       if (isLeave) {
@@ -181,7 +186,9 @@ async function printStatus() {
     }
   }
 
-  out.write('\n\x1b[90mTip:`watch another command` or `exit`\x1b[0m\n')
+  if (output=="") {
+    out.write(tip)
+  }
   rl.prompt(true)
 }
 
@@ -341,6 +348,7 @@ rl.on('line', (line) => {
     state = STATE_NONE
     textInfo = ''
   } else if(line) {
+    line = alias(line)
     exec(line, (err, stdout, stderr) => {
       if(err) {
         console.error(err.stack)
@@ -351,6 +359,9 @@ rl.on('line', (line) => {
       if(stderr) {
         console.error(stderr)
       }
+      setTimeout(function() {
+        printStatus()
+      }, 5000)
       rl.prompt(true)
     })
   } else {
