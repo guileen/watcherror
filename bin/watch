@@ -322,7 +322,7 @@ function startTest() {
 //-------------------------------------------------------
 // Watch change
 require('chokidar').watch('.', {
-  ignored: ['**/node_modules', '**/tslint.json', '**/dist', '**/coverage', /(^|[\/\\])\../],
+  ignored: ['**/node_modules', '**/tslint.json', '**/dist', '**/coverage', '**/*.log', /(^|[\/\\])\../],
   ignoreInitial: true,
 }).on('all', (_, filename) => {
   lastModifiedFilename = filename
@@ -349,21 +349,25 @@ rl.on('line', (line) => {
     textInfo = ''
   } else if(line) {
     line = alias(line)
-    exec(line, (err, stdout, stderr) => {
-      if(err) {
-        console.error(err.stack)
-      }
-      if(stdout) {
-        console.log(stdout)
-      }
-      if(stderr) {
-        console.error(stderr)
-      }
-      setTimeout(function() {
-        printStatus()
-      }, 5000)
-      rl.prompt(true)
-    })
+    try{ 
+      exec(line, (err, stdout, stderr) => {
+        if(err) {
+          console.error(err.stack)
+        }
+        if(stdout) {
+          console.log(stdout)
+        }
+        if(stderr) {
+          console.error(stderr)
+        }
+        setTimeout(function() {
+          printStatus()
+        }, 5000)
+        rl.prompt(true)
+      })
+    } catch (e) {
+      console.error("Fail to execute command: "+line + "\nError:" + e.message)
+    }
   } else {
     rl.prompt(true)
   }
