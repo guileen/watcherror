@@ -12,7 +12,7 @@ function hasWarn(line) {
   return /(^|\s)WARN\s/i.test(line)
 }
 function hasError(line) {
-  return /(error|.go:\d+:\d+:|panic:|(^|\s)ERRO\s|\sFAIL:)/i.test(line) && !isExcludeError(line)
+  return /(error|.go:\d+:\d+:|panic:|(^|\s)ERRO\s|\sFAIL:|FAIL\s)/i.test(line) && !isExcludeError(line)
 }
 
 function isExcludeError(line) {
